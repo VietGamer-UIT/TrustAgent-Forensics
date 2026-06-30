@@ -1,0 +1,17 @@
+# =============================================================================
+# TrustAgent.Forensics — Phase 1 Dependencies
+# =============================================================================
+# Install: pip install -r requirements.txt
+
+# Core - Z3 Theorem Prover
+z3-solver>=4.12.0
+
+# Data Validation
+pydantic>=2.0
+pydantic-settings>=2.0
+
+# Environment
+python-dotenv>=1.0
+
+# Testing
+pytest>=8.0
