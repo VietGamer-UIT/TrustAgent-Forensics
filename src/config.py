@@ -2,6 +2,7 @@
 TrustAgent.Forensics — Application Configuration
 
 Loads settings from environment variables / .env file using pydantic-settings.
+Author: VietGamer-UIT (https://github.com/VietGamer-UIT)
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ class Settings(BaseSettings):
 
     # --- Gemini API ---
     gemini_api_key: str = Field(default="", description="Google Gemini API key")
-    gemini_model: str = Field(default="gemini-1.5-pro", description="Gemini model name")
+    gemini_model: str = Field(default="gemini-2.0-flash", description="Gemini model name (2026)")
 
     # --- Database ---
     database_url: str = Field(
