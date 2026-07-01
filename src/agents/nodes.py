@@ -1,14 +1,15 @@
 """
-TrustAgent.Forensics — Node Functions cho LangGraph Workflow (Phase 3)
+TrustAgent.Forensics — Node Functions cho LangGraph Workflow (Phase 3.5)
 
 Mỗi "node" là một bước trong workflow, nhận vào AgentState và trả về
 dict để cập nhật state. LangGraph tự động merge dict vào state.
 
-Các node:
-    parse_node   — Gọi SemanticParser để hiểu câu yêu cầu
-    verify_node  — Gọi TrustAgentSolver để kiểm chứng bằng Z3
-    explain_node — Tạo câu trả lời thân thiện cho người dùng
-    route_node   — Quyết định đi tiếp hay skip verify (nếu UNKNOWN)
+Các node (Phase 3.5):
+    parse_node       — Gọi SemanticParser để hiểu câu yêu cầu
+    legal_rag_node   — Lấy ngưỡng pháp lý từ văn bản luật qua RAG (mới)
+    verify_node      — Gọi TrustAgentSolver Z3 với ngưỡng động từ RAG
+    explain_node     — Tạo câu trả lời thân thiện cho người dùng
+    route_after_parse — Quyết định: UNKNOWN → explain, known → legal_rag
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ import logging
 from typing import Any
 
 from src.agents.state import AgentState
+from src.rag.retriever import LegalRetriever
+from src.rag.extractor import ThresholdExtractor, FALLBACK_THRESHOLDS
 from src.semantic.parser import SemanticParser
 from src.semantic.schemas import ScenarioType
 from src.z3_engine.models import VerificationStatus
@@ -27,11 +30,14 @@ from src.z3_engine.rules.kr_refund_rule import KoreaTaxRefundRule
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Singleton solver — đã đăng ký sẵn tất cả rules
+# Singletons — khởi tạo 1 lần, dùng lại xuyên request
 # ---------------------------------------------------------------------------
 _solver = TrustAgentSolver()
 _solver.register_rule(VietnamCashPaymentRule())
 _solver.register_rule(KoreaTaxRefundRule())
+
+_retriever = LegalRetriever()      # LegalRetriever: load docs + optional ChromaDB
+_extractor = ThresholdExtractor()  # ThresholdExtractor: JSON > regex > fallback
 
 
 def _get_parser(api_key: str = "") -> SemanticParser:
@@ -115,26 +121,83 @@ def parse_node(state: AgentState) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Node 2: verify_node — Z3 Formal Verification (Symbolic Layer)
+# Node 2 (mới): legal_rag_node — Legal RAG: lấy ngưỡng từ văn bản luật
+# ---------------------------------------------------------------------------
+def legal_rag_node(state: AgentState) -> dict[str, Any]:
+    """
+    Bước 2: Lấy ngưỡng pháp lý từ cơ sở dữ liệu văn bản luật (RAG).
+
+    Thay thế việc hardcode hằng số như VN_CASH_THRESHOLD = 20_000_000.
+    Legal RAG Node trậtự tắt cả từ cơ sở dữ liệu luật động .
+
+    Input  (từ state): scenario_type
+    Output (vào state): legal_thresholds
+
+    Luồng xử lý:
+        1. LegalRetriever.get_legal_text(scenario_type) → văn bản luật
+        2. ThresholdExtractor.extract(scenario_type, text) → dict ngưỡng
+        3. Nếu fail → fallback defaults (không bao giờ raise)
+
+    Ví dụ:
+        Input:  scenario_type="vn_payment"
+        Output: legal_thresholds={"VN_CASH_THRESHOLD": 20000000}
+
+        Input:  scenario_type="kr_tax_refund"
+        Output: legal_thresholds={"KR_MIN_RECEIPT_AMOUNT": 30000,
+                                   "KR_CUSTOMS_CHECK_THRESHOLD": 75000}
+    """
+    scenario_type = state.get("scenario_type", "unknown")
+    logger.info(f"[legal_rag_node] Tra cứu luật cho scenario: {scenario_type}")
+
+    # Fallback an toàn nếu scenario không xác định
+    if scenario_type not in FALLBACK_THRESHOLDS:
+        logger.warning(f"[legal_rag_node] Không có luật cho scenario: {scenario_type}")
+        return {"legal_thresholds": {}}
+
+    try:
+        # Tầng 1: Lấy văn bản luật từ RAG
+        legal_text = _retriever.get_legal_text(scenario_type)
+
+        # Tầng 2: Trích xuất ngưỡng từ văn bản
+        thresholds = _extractor.extract(scenario_type, legal_text)
+
+        logger.info(f"[legal_rag_node] Ngưỡng đã lấy: {thresholds}")
+        return {"legal_thresholds": thresholds}
+
+    except Exception as e:
+        # Tầng 3: Fallback nếu RAG thất bại hoàn toàn
+        logger.error(f"[legal_rag_node] Lỗi RAG: {e} → dùng fallback defaults")
+        fallback = dict(FALLBACK_THRESHOLDS.get(scenario_type, {}))
+        return {"legal_thresholds": fallback}
+
+
+# ---------------------------------------------------------------------------
+# Node 3: verify_node — Z3 Formal Verification (Symbolic Layer) [Updated]
 # ---------------------------------------------------------------------------
 def verify_node(state: AgentState) -> dict[str, Any]:
     """
-    Bước 2: Kiểm chứng dữ liệu bằng Z3 Theorem Prover.
+    Bước 3: Kiểm chứng dữ liệu bằng Z3 Theorem Prover.
 
-    Input  (từ state): z3_data, applicable_rules
+    Cập nhật Phase 3.5: Nhận dynamic_thresholds từ state["legal_thresholds"]
+    và truyền vào TrustAgentSolver.verify() thay vì dùng hằng số.
+
+    Input  (từ state): z3_data, applicable_rules, legal_thresholds
     Output (vào state): z3_status, is_compliant, violations, verify_time_ms, verify_error
 
     Ví dụ:
-        Input:  z3_data={"amount": 25000000, "is_cash_payment": True}
+        Input:  z3_data={"amount": 25000000, "is_cash_payment": True},
+                legal_thresholds={"VN_CASH_THRESHOLD": 20000000}
         Output: z3_status="UNSAT", is_compliant=False, violations=[...]
     """
     z3_data = state.get("z3_data", {})
     applicable_rules = state.get("applicable_rules", [])
-    scenario_type = state.get("scenario_type", "UNKNOWN")
+    scenario_type = state.get("scenario_type", "unknown")
+    # Lấy ngưỡng từ RAG state (None nếu legal_rag_node chưa chạy)
+    dynamic_thresholds = state.get("legal_thresholds") or None
 
     logger.info(
         f"[verify_node] Kiểm chứng scenario={scenario_type}, "
-        f"rules={applicable_rules}, data_keys={list(z3_data.keys())}"
+        f"rules={applicable_rules}, thresholds={dynamic_thresholds}"
     )
 
     # Nếu không có data để verify → skip
@@ -148,9 +211,11 @@ def verify_node(state: AgentState) -> dict[str, Any]:
         }
 
     try:
+        # Truyền dynamic_thresholds từ RAG vào solver
         verify_result = _solver.verify(
             data=z3_data,
             rule_names=applicable_rules,
+            dynamic_thresholds=dynamic_thresholds,  # ← Từ Legal RAG Node
         )
 
         violations_dicts = [v.model_dump() for v in verify_result.violations]
@@ -270,12 +335,12 @@ def explain_node(state: AgentState) -> dict[str, Any]:
 def route_after_parse(state: AgentState) -> str:
     """
     Sau parse_node, quyết định bước tiếp theo:
-    - Nếu scenario UNKNOWN → nhảy thẳng sang explain_node (không cần verify)
-    - Nếu scenario xác định → đi qua verify_node
+    - Nếu scenario UNKNOWN → nhảy thẳng sang explain_node
+    - Nếu scenario xác định → đi qua legal_rag_node (mới) rồi verify_node
     """
-    scenario_type = state.get("scenario_type", "UNKNOWN")
+    scenario_type = state.get("scenario_type", "unknown")
     if scenario_type == ScenarioType.UNKNOWN.value:
-        logger.info("[route] Scenario UNKNOWN → skip verify, đi thẳng explain")
+        logger.info("[route] Scenario UNKNOWN → skip rag+verify, đi thẳng explain")
         return "explain"
-    logger.info(f"[route] Scenario={scenario_type} → đi qua verify")
-    return "verify"
+    logger.info(f"[route] Scenario={scenario_type} → đi qua legal_rag")
+    return "rag"  # ← Đổi từ 'verify' sang 'rag' (Phase 3.5)

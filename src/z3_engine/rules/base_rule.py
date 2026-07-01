@@ -57,7 +57,7 @@ class BusinessRule(ABC):
         return "critical"
 
     @abstractmethod
-    def encode(self, solver: Solver, data: dict[str, Any]) -> None:
+    def encode(self, solver: Solver, data: dict[str, Any], dynamic_thresholds: dict[str, int] | None = None) -> None:
         """
         Encode this business rule as Z3 constraints and add them to the solver.
 
@@ -69,13 +69,15 @@ class BusinessRule(ABC):
         Args:
             solver: Z3 Solver instance to add constraints to
             data: Dictionary of transaction data (from Pydantic model)
+            dynamic_thresholds: Thresholds extracted from RAG (Legal RAG Module).
+                                If None, use hardcoded class-level defaults.
+                                Format: {"VN_CASH_THRESHOLD": 20000000}
 
         Example:
             z3_amount = Int('amount')
             z3_is_cash = Bool('is_cash')
-            # Policy: If amount >= threshold, must NOT be cash
-            solver.add(Implies(z3_amount >= 20_000_000, Not(z3_is_cash)))
-            # Bind actual values
+            threshold = (dynamic_thresholds or {}).get('VN_CASH_THRESHOLD', 20_000_000)
+            solver.add(Implies(z3_amount >= threshold, Not(z3_is_cash)))
             solver.add(z3_amount == data['amount'])
             solver.add(z3_is_cash == data['is_cash_payment'])
         """

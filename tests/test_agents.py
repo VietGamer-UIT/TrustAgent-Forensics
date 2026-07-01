@@ -264,17 +264,17 @@ class TestRouting:
     """Kiểm tra conditional routing trong graph."""
 
     def test_route_vn_goes_to_verify(self, vn_cash_state):
-        # vn_cash_state fixture dùng "VN_PAYMENT" (uppercase) — cần fix fixture
+        # Phase 3.5: route trả về 'rag' (legal_rag_node) thay vì 'verify' trực tiếp
         state = dict(vn_cash_state)
         state["scenario_type"] = "vn_payment"  # dùng enum value thực tế
         next_step = route_after_parse(state)  # type: ignore
-        assert next_step == "verify"
+        assert next_step == "rag"  # ← Phase 3.5: đi qua RAG trước
 
     def test_route_kr_goes_to_verify(self, kr_small_state):
         state = dict(kr_small_state)
         state["scenario_type"] = "kr_tax_refund"
         next_step = route_after_parse(state)  # type: ignore
-        assert next_step == "verify"
+        assert next_step == "rag"  # ← Phase 3.5: đi qua RAG trước
 
     def test_route_unknown_skips_verify(self, unknown_state):
         state = dict(unknown_state)

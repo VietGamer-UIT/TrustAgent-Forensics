@@ -86,17 +86,21 @@ class TrustAgentSolver:
         self,
         data: dict[str, Any],
         rule_names: list[str] | None = None,
+        dynamic_thresholds: dict[str, int] | None = None,
     ) -> VerificationResult:
         """
         Verify transaction data against registered business rules using Z3.
 
         For each rule, a fresh Z3 Solver is created to ensure isolation.
-        The rule encodes its constraints, binds the actual data, and
-        the solver checks for satisfiability.
+        The rule encodes its constraints (with optional dynamic thresholds from RAG),
+        binds the actual data, and the solver checks for satisfiability.
 
         Args:
             data: Transaction data dictionary (from Pydantic model)
             rule_names: Specific rules to check. If None, checks ALL registered rules.
+            dynamic_thresholds: Thresholds from Legal RAG Module.
+                                If provided, rules use these instead of hardcoded defaults.
+                                Format: {"VN_CASH_THRESHOLD": 20000000, ...}
 
         Returns:
             VerificationResult with status, violations, and timing info
@@ -140,7 +144,8 @@ class TrustAgentSolver:
 
             try:
                 # Let the rule encode its constraints + bind data
-                rule.encode(z3_solver, data)
+                # Pass dynamic_thresholds from RAG (None = use rule's own defaults)
+                rule.encode(z3_solver, data, dynamic_thresholds)
 
                 # Ask Z3: "Can all constraints be satisfied simultaneously?"
                 result = z3_solver.check()

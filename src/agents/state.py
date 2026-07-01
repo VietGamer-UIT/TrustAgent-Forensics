@@ -53,3 +53,7 @@ class AgentState(TypedDict, total=False):
 
     # --- Lỗi chung ---
     final_error: str | None             # Lỗi không mong muốn toàn cục
+
+    # --- Legal RAG Module (Phase 3.5) ---
+    legal_thresholds: dict[str, int]    # Ngưỡng pháp lý từ RAG: {"VN_CASH_THRESHOLD": 20000000}
+                                        # Được điền bởi legal_rag_node, đọc bởi verify_node
