@@ -22,7 +22,49 @@ Trước khi code bất cứ thứ gì, điền vào template dưới đây:
 
 ---
 
-## [2026-07-01] — Phase 4: FastAPI Backend + PostgreSQL Audit Trail
+## [2026-07-02] — Phase 4: FastAPI Backend + SQLite/PostgreSQL Audit Trail ← 🔄 ĐANG THỰC HIỆN
+
+**Mục tiêu:**
+Xây dựng REST API đầy đủ + lưu audit trail bất biến vào database.
+
+**Quyết định kiến trúc quan trọng:**
+- Dùng **SQLite + aiosqlite** cho dev/test (không cần cài PostgreSQL)
+- Chỉ đổi `DATABASE_URL` trong `.env` là chạy được với PostgreSQL 17
+- SQLAlchemy async — tương thích cả SQLite và PostgreSQL
+- KHÔNG cần `asyncpg` hay Docker trong Phase 4 → test dễ hơn
+
+**Phương pháp:**
+```
+src/database/
+├── __init__.py
+├── models.py        ← SQLAlchemy ORM (AuditLog table, JSONB→JSON cho SQLite)
+├── session.py       ← AsyncSession factory (aiosqlite driver)
+└── repository.py    ← CRUD: save_audit(), get_audit_by_id(), list_audits()
+
+src/api/
+├── __init__.py
+├── main.py          ← FastAPI app, CORS, lifespan startup
+├── dependencies.py  ← get_db(), get_workflow() DI functions
+├── schemas.py       ← VerifyRequest, VerifyResponse, AuditResponse
+└── routes/
+    ├── __init__.py
+    ├── verify.py    ← POST /api/v1/verify
+    └── audit.py     ← GET /api/v1/audit/{id}, GET /api/v1/audit
+
+tests/test_api.py    ← httpx.AsyncClient + pytest-asyncio, mock DB
+```
+
+**Rủi ro / lưu ý:**
+- SQLAlchemy JSON type map → SQLite dùng `JSON`, PostgreSQL dùng `JSONB`
+- pytest-asyncio cần `asyncio_mode = "auto"` trong `pyproject.toml`
+- `httpx` cần cài thêm: `pip install httpx[asyncio]`
+- Luôn commit sau khi tests pass
+
+**Tiêu chí hoàn thành:**
+- [ ] pytest tests/ → 111 + N passed
+- [ ] POST /api/v1/verify hoạt động đúng
+- [ ] Audit record lưu vào DB
+- [ ] Git tag v0.4.0-fastapi-backend
 
 **Mục tiêu:**
 Xây dựng lớp API và lưu trữ để hệ thống có thể nhận request HTTP từ bên ngoài, thực thi pipeline RAG → Z3, và lưu lại toàn bộ lịch sử kiểm tra vào database bất biến.
@@ -79,7 +121,7 @@ Response 200:
 
 ---
 
-## [2026-07-01] — Phase 5: Web Dashboard
+## [COMING SOON] — Phase 5: Web Dashboard
 
 **Mục tiêu:**
 Giao diện web đơn giản để demo hệ thống tại INNOSTAR 2026.
@@ -95,7 +137,7 @@ Giao diện web đơn giản để demo hệ thống tại INNOSTAR 2026.
 
 ---
 
-## [2026-07-01] — Phase 6: Docker + Demo Package
+## [COMING SOON] — Phase 6: Docker + Demo Package
 
 **Mục tiêu:**
 Đóng gói toàn bộ hệ thống vào Docker Compose để chạy 1 lệnh.
